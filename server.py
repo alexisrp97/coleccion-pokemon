@@ -78,7 +78,7 @@ def make_handler(con, config):
             qs = urllib.parse.parse_qs(url.query)
             one = lambda k, d="": (qs.get(k) or [d])[0]  # noqa: E731
             try:
-                if url.path in ("/", "/index.html", "/app"):
+                if url.path in ("/", "/index.html", "/app") or url.path.startswith("/@"):
                     page = os.path.join(base_dir, "collector.app.html")
                     if os.path.exists(page):
                         with open(page, "rb") as fh:
@@ -112,13 +112,87 @@ def make_handler(con, config):
                             return self._send(200, fh.read(), "image/png", cache="max-age=86400")
                     return self._error("sin icono", 404)
 
+                if url.path.startswith("/api/publico/"):
+                    nombre = url.path.split("/api/publico/", 1)[1].strip("/").lstrip("@").lower()
+                    row = con.execute("SELECT id, public FROM users WHERE name=?", (nombre,)).fetchone()
+                    if not row or not row[1]:
+                        return self._error("esa vitrina no existe o no es pública", 404)
+                    raw = db.get_meta(con, f"appstate:{row[0]}") or "{}"
+                    try:
+                        cards = (json.loads(raw).get("cards") or [])
+                    except Exception:
+                        cards = []
+                    publicas = [{k: c.get(k) for k in
+                                 ("name", "collection", "number", "category", "variant",
+                                  "rarity", "sealed", "graded", "grader", "grade",
+                                  "quantity", "image", "cache")}
+                                for c in cards if not c.get("wish")]
+                    return self._json({"usuario": nombre, "cards": publicas})
+
+                if url.path == "/api/perfil":
+                    uid = self._uid()
+                    if not uid:
+                        return self._error("hace falta entrar con tu cuenta", 401)
+                    row = con.execute("SELECT name, email, created FROM users WHERE id=?", (uid,)).fetchone()
+                    if not row:
+                        return self._error("cuenta no encontrada", 404)
+                    pub = con.execute("SELECT public FROM users WHERE id=?", (uid,)).fetchone()
+                    return self._json({"usuario": row[0], "correo": row[1] or "",
+                                       "alta": (row[2] or "")[:10], "publico": bool(pub and pub[0])})
+
+                if url.path == "/api/admin":
+                    uid = self._uid()
+                    if uid != 1:
+                        return self._error("sólo el dueño de la web", 403)
+                    filas = []
+                    for (i, nom, mail, alta, pub, prem) in con.execute(
+                            "SELECT id, name, email, created, public, premium FROM users ORDER BY id"):
+                        raw = db.get_meta(con, f"appstate:{i}") or "{}"
+                        try:
+                            n = len(json.loads(raw).get("cards") or [])
+                        except Exception:
+                            n = 0
+                        ult = con.execute("SELECT MAX(created) FROM tokens WHERE user_id=?", (i,)).fetchone()[0]
+                        filas.append({"usuario": nom, "correo": mail or "", "alta": (alta or "")[:10],
+                                      "cartas": n, "publico": bool(pub), "premium": bool(prem) or i == 1,
+                                      "ultimo": (ult or "")[:16].replace("T", " ")})
+                    return self._json({"usuarios": filas})
+
+                if url.path == "/api/admin/copia":
+                    uid = self._uid()
+                    if uid != 1:
+                        return self._error("sólo el dueño de la web", 403)
+                    usuarios = [dict(zip(("id", "name", "email", "created", "public", "salt", "hash"), f))
+                                for f in con.execute(
+                                    "SELECT id, name, email, created, public, salt, hash FROM users")]
+                    estados = {}
+                    for (u,) in con.execute("SELECT id FROM users"):
+                        estados[str(u)] = json.loads(db.get_meta(con, f"appstate:{u}") or "{}")
+                    cuerpo = json.dumps({"copia": "collector.app-servidor", "usuarios": usuarios,
+                                         "estados": estados}, ensure_ascii=False)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Disposition", "attachment; filename=copia-servidor.json")
+                    cuerpo = cuerpo.encode("utf-8")
+                    self.send_header("Content-Length", str(len(cuerpo)))
+                    self.end_headers()
+                    self.wfile.write(cuerpo)
+                    return
+
                 if url.path == "/api/quien":
                     uid = self._uid()
-                    nombre = None
+                    nombre, prem = None, False
                     if uid:
-                        row = con.execute("SELECT name FROM users WHERE id=?", (uid,)).fetchone()
-                        nombre = row[0] if row else None
-                    return self._json({"cuentas": cuentas, "usuario": nombre})
+                        row = con.execute("SELECT name, premium FROM users WHERE id=?", (uid,)).fetchone()
+                        if row:
+                            nombre, prem = row[0], bool(row[1]) or uid == 1
+                    return self._json({"cuentas": cuentas, "usuario": nombre, "premium": prem})
+
+                if url.path == "/api/config":
+                    return self._json({
+                        "paylink": db.get_meta(con, "cfg:paylink") or "",
+                        "ebay": db.get_meta(con, "cfg:ebay") or "",
+                    })
 
                 if url.path == "/api/state":
                     basis = one("basis", "avg7")
@@ -188,15 +262,19 @@ def make_handler(con, config):
                         return self._error("el nombre: de 2 a 30 letras o números (vale _ y .)")
                     if len(clave) < 6:
                         return self._error("la clave necesita al menos 6 caracteres")
+                    correo = str(body.get("correo") or "").strip().lower()
+                    if path == "/api/registro":
+                        if not ("@" in correo and "." in correo.split("@")[-1] and 5 <= len(correo) <= 120):
+                            return self._error("hace falta un correo válido para poder recuperar la clave")
                     with STATE_LOCK:
                         row = con.execute("SELECT id, salt, hash FROM users WHERE name=?", (nombre,)).fetchone()
                         if path == "/api/registro":
                             if row:
                                 return self._error("ese nombre ya está cogido", 409)
                             salt = secrets.token_hex(16)
-                            con.execute("INSERT INTO users(name, salt, hash, created) VALUES(?,?,?,?)",
+                            con.execute("INSERT INTO users(name, salt, hash, created, email) VALUES(?,?,?,?,?)",
                                         (nombre, salt, _hash_clave(clave, salt),
-                                         datetime.datetime.utcnow().isoformat()))
+                                         datetime.datetime.utcnow().isoformat(), correo))
                             uid = con.execute("SELECT id FROM users WHERE name=?", (nombre,)).fetchone()[0]
                         else:
                             if not row or not secrets.compare_digest(row[2], _hash_clave(clave, row[1])):
@@ -209,6 +287,96 @@ def make_handler(con, config):
                     return self._json({"token": token, "usuario": nombre})
                 except Exception as exc:   # noqa: BLE001
                     return self._error(exc, 500)
+
+            if path == "/api/recuperar":
+                try:
+                    body = self._body()
+                    nombre = str(body.get("usuario") or "").strip().lower()
+                    correo = str(body.get("correo") or "").strip().lower()
+                    nueva = str(body.get("clave") or "")
+                    if len(nueva) < 6:
+                        return self._error("la clave nueva necesita al menos 6 caracteres")
+                    with STATE_LOCK:
+                        row = con.execute("SELECT id, email FROM users WHERE name=?", (nombre,)).fetchone()
+                        if not row or not row[1] or row[1] != correo:
+                            return self._error("ese usuario y correo no casan", 401)
+                        salt = secrets.token_hex(16)
+                        con.execute("UPDATE users SET salt=?, hash=? WHERE id=?",
+                                    (salt, _hash_clave(nueva, salt), row[0]))
+                        con.execute("DELETE FROM tokens WHERE user_id=?", (row[0],))
+                        con.commit()
+                    return self._json({"hecho": True})
+                except Exception as exc:   # noqa: BLE001
+                    return self._error(exc, 500)
+
+            if path == "/api/perfil":
+                try:
+                    uid = self._uid()
+                    if not uid:
+                        return self._error("hace falta entrar con tu cuenta", 401)
+                    body = self._body()
+                    actual = str(body.get("clave_actual") or "")
+                    with STATE_LOCK:
+                        row = con.execute("SELECT salt, hash, name FROM users WHERE id=?", (uid,)).fetchone()
+                        if not row or not secrets.compare_digest(row[1], _hash_clave(actual, row[0])):
+                            return self._error("la clave actual no es correcta", 401)
+                        if body.get("nuevo_usuario"):
+                            nu = str(body["nuevo_usuario"]).strip().lower()
+                            if not (2 <= len(nu) <= 30) or not nu.replace("_", "").replace(".", "").isalnum():
+                                return self._error("el nombre: de 2 a 30 letras o números (vale _ y .)")
+                            if con.execute("SELECT 1 FROM users WHERE name=? AND id<>?", (nu, uid)).fetchone():
+                                return self._error("ese nombre ya está cogido", 409)
+                            con.execute("UPDATE users SET name=? WHERE id=?", (nu, uid))
+                        if body.get("nuevo_correo"):
+                            nc = str(body["nuevo_correo"]).strip().lower()
+                            if not ("@" in nc and "." in nc.split("@")[-1] and 5 <= len(nc) <= 120):
+                                return self._error("ese correo no parece válido")
+                            con.execute("UPDATE users SET email=? WHERE id=?", (nc, uid))
+                        if "publico" in body:
+                            con.execute("UPDATE users SET public=? WHERE id=?",
+                                        (1 if body["publico"] else 0, uid))
+                        if body.get("nueva_clave"):
+                            nk = str(body["nueva_clave"])
+                            if len(nk) < 6:
+                                return self._error("la clave nueva necesita al menos 6 caracteres")
+                            salt = secrets.token_hex(16)
+                            con.execute("UPDATE users SET salt=?, hash=? WHERE id=?",
+                                        (salt, _hash_clave(nk, salt), uid))
+                            auth = self.headers.get("Authorization") or ""
+                            mio = auth[7:] if auth.startswith("Bearer ") else ""
+                            con.execute("DELETE FROM tokens WHERE user_id=? AND token<>?", (uid, mio))
+                        con.commit()
+                        nombre = con.execute("SELECT name FROM users WHERE id=?", (uid,)).fetchone()[0]
+                    return self._json({"hecho": True, "usuario": nombre})
+                except Exception as exc:   # noqa: BLE001
+                    return self._error(exc, 500)
+
+            if path == "/api/admin/config":
+                uid = self._uid()
+                if uid != 1:
+                    return self._error("sólo el dueño de la web", 403)
+                body = self._body()
+                with STATE_LOCK:
+                    if "paylink" in body:
+                        db.set_meta(con, "cfg:paylink", str(body["paylink"]).strip())
+                    if "ebay" in body:
+                        db.set_meta(con, "cfg:ebay", str(body["ebay"]).strip())
+                    con.commit()
+                return self._json({"hecho": True})
+
+            if path == "/api/admin/premium":
+                uid = self._uid()
+                if uid != 1:
+                    return self._error("sólo el dueño de la web", 403)
+                body = self._body()
+                nombre = str(body.get("usuario") or "").strip().lower()
+                with STATE_LOCK:
+                    r = con.execute("UPDATE users SET premium=? WHERE name=?",
+                                    (1 if body.get("premium") else 0, nombre))
+                    con.commit()
+                    if not r.rowcount:
+                        return self._error("no existe ese usuario", 404)
+                return self._json({"hecho": True})
 
             if path == "/api/salir":
                 auth = self.headers.get("Authorization") or ""
