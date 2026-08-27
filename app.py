@@ -24,7 +24,7 @@ from vitrina import art, cardmarket, db, server, valuation  # noqa: E402
 
 DEFAULTS = {
     "base_dir": BASE_DIR,
-    "db_path": os.path.join(BASE_DIR, "coleccion.db"),
+    "db_path": os.path.join(os.environ.get("DB_DIR", BASE_DIR), "coleccion.db"),
     "data_dir": os.path.join(BASE_DIR, "data"),
     "basis": "avg7",
     "port": 8765,

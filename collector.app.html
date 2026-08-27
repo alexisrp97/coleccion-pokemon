@@ -895,7 +895,10 @@ async function panelAdmin() {
     </div>
     <button class="ghost" id="acfgok" style="width:100%">Guardar configuración</button>
     <button class="primary" id="acopia" style="width:100%;margin-top:.9rem">Descargar copia de TODA la base del servidor</button>
-    <p class="hint" style="margin-top:.5rem">La copia trae usuarios y colecciones: guárdala a buen recaudo. Es tu seguro ante el disco efímero del plan gratuito.</p>
+    <button class="ghost" id="arest" style="width:100%;margin-top:.5rem">Restaurar la base desde una copia</button>
+    <p class="hint" style="margin-top:.5rem">El ritual de cada actualización: <b>1)</b> Descargar copia · <b>2)</b> desplegar ·
+      <b>3)</b> crear tu cuenta de dueño otra vez · <b>4)</b> Restaurar aquí la copia — y todos los usuarios
+      vuelven con sus claves, colecciones y premium de siempre.</p>
   </div>`;
   document.body.appendChild(sc);
   sc.onclick = e => { if (e.target === sc || e.target.id === "acerr") sc.remove(); };
@@ -925,6 +928,31 @@ async function panelAdmin() {
       a.download = "copia-servidor-" + today() + ".json";
       a.click();
     } catch (e) { say("No he podido bajar la copia.", true); }
+  };
+  sc.querySelector("#arest").onclick = () => {
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = ".json";
+    inp.onchange = () => {
+      const f = inp.files[0]; if (!f) return;
+      const rd = new FileReader();
+      rd.onload = async () => {
+        try {
+          const data = JSON.parse(rd.result);
+          if (data.copia !== "collector.app-servidor") return say("Ese fichero no es una copia del servidor.", true);
+          if (!confirm(`La copia trae ${(data.usuarios||[]).length} usuarios. Restaurar SUSTITUYE la base actual del servidor. ¿Seguimos?`)) return;
+          const r = await fetch("/api/admin/restaurar", {method: "POST",
+            headers: Object.assign({"Content-Type": "application/json"}, cab()),
+            body: JSON.stringify(data)});
+          const d = await r.json();
+          if (!r.ok) return say(d.error || "No ha podido ser.", true);
+          try { localStorage.removeItem("vitrina:token"); } catch (e2) { /* nada */ }
+          alert(`Base restaurada: ${d.usuarios} usuarios de vuelta con sus claves de siempre. Entra de nuevo con tu cuenta original.`);
+          location.reload();
+        } catch (e2) { say("No he podido leer ese fichero.", true); }
+      };
+      rd.readAsText(f);
+    };
+    inp.click();
   };
 }
 
@@ -4077,12 +4105,15 @@ document.addEventListener("drop", e => {
 // atajos: Esc cierra, "/" o Cmd+K van al buscador, "n" crea carta
 document.addEventListener("keydown", e => {
   const modal = document.getElementById("modal");
-  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)
+    || (document.activeElement && document.activeElement.isContentEditable);
+  const panel = document.querySelector(".scrim");            // cuenta, papelera, dueño…
   if (e.key === "Escape" && modal.innerHTML) { modal.innerHTML = ""; return; }
+  if (typing || panel) return;                               // escribiendo o con un panel: los atajos, callados
   if ((e.key === "/" || (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey))) && !modal.innerHTML) {
     e.preventDefault(); document.getElementById("q").focus(); return;
   }
-  if (e.key.toLowerCase() === "n" && !typing && !modal.innerHTML) { e.preventDefault(); openEditor(null); }
+  if (e.key.toLowerCase() === "n" && !modal.innerHTML) { e.preventDefault(); openEditor(null); }
 });
 
 // arrastrar ficheros a cualquier parte de la ventana

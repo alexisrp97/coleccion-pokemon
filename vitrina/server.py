@@ -162,9 +162,9 @@ def make_handler(con, config):
                     uid = self._uid()
                     if uid != 1:
                         return self._error("sólo el dueño de la web", 403)
-                    usuarios = [dict(zip(("id", "name", "email", "created", "public", "salt", "hash"), f))
+                    usuarios = [dict(zip(("id", "name", "email", "created", "public", "premium", "salt", "hash"), f))
                                 for f in con.execute(
-                                    "SELECT id, name, email, created, public, salt, hash FROM users")]
+                                    "SELECT id, name, email, created, public, premium, salt, hash FROM users")]
                     estados = {}
                     for (u,) in con.execute("SELECT id FROM users"):
                         estados[str(u)] = json.loads(db.get_meta(con, f"appstate:{u}") or "{}")
@@ -363,6 +363,33 @@ def make_handler(con, config):
                         db.set_meta(con, "cfg:ebay", str(body["ebay"]).strip())
                     con.commit()
                 return self._json({"hecho": True})
+
+            if path == "/api/admin/restaurar":
+                uid = self._uid()
+                if uid != 1:
+                    return self._error("sólo el dueño de la web", 403)
+                try:
+                    body = self._body()
+                    if body.get("copia") != "collector.app-servidor":
+                        return self._error("ese fichero no es una copia del servidor")
+                    usuarios = body.get("usuarios") or []
+                    estados = body.get("estados") or {}
+                    with STATE_LOCK:
+                        con.execute("DELETE FROM tokens")
+                        con.execute("DELETE FROM users")
+                        for u in usuarios:
+                            con.execute("""INSERT INTO users(id, name, email, created, public, premium, salt, hash)
+                                           VALUES(?,?,?,?,?,?,?,?)""",
+                                        (u.get("id"), u.get("name"), u.get("email"), u.get("created"),
+                                         1 if u.get("public") else 0, 1 if u.get("premium") else 0,
+                                         u.get("salt"), u.get("hash")))
+                        for k, v in estados.items():
+                            db.set_meta(con, f"appstate:{k}", json.dumps(v, ensure_ascii=False))
+                            db.set_meta(con, f"appstate_v:{k}", "1")
+                        con.commit()
+                    return self._json({"hecho": True, "usuarios": len(usuarios)})
+                except Exception as exc:   # noqa: BLE001
+                    return self._error(exc, 500)
 
             if path == "/api/admin/premium":
                 uid = self._uid()
