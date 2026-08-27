@@ -853,32 +853,62 @@ function pideCuenta() {
     <p class="hint" style="margin-bottom:.8rem">Cada persona tiene su propia colección. Entra o crea tu cuenta.</p>
     <div class="fields">
       <label class="f wide"><span>Nombre de usuario</span><input id="cu" autocomplete="username"></label>
-      <label class="f wide"><span>Clave (mínimo 6)</span><input id="cc" type="password" autocomplete="current-password"></label>
+      <label class="f wide" id="cmailwrap" style="display:none"><span>Correo electrónico (para recuperar la clave)</span>
+        <input id="cmail" type="email" autocomplete="email" placeholder="tu@correo.com"></label>
+      <label class="f wide"><span id="cclabel">Clave (mínimo 6)</span><input id="cc" type="password" autocomplete="current-password"></label>
     </div>
     <p class="hint" id="cmsg" style="min-height:1.2em"></p>
     <div style="display:flex;gap:.5rem;margin-top:.4rem">
       <button class="primary" id="centra" style="flex:1">Entrar</button>
       <button class="ghost" id="ccrea" style="flex:1">Crear cuenta</button>
     </div>
+    <p class="hint" style="margin-top:.7rem;text-align:center">
+      <a href="#" id="colvido" style="color:var(--accent)">¿Olvidaste tu clave?</a></p>
   </div>`;
   document.body.appendChild(sc);
   const msg = sc.querySelector("#cmsg");
+  let modo = "entrar";
+  const mail = sc.querySelector("#cmailwrap");
   async function manda(ruta) {
     msg.textContent = "Un momento…";
     try {
+      const cuerpo = {usuario: sc.querySelector("#cu").value, clave: sc.querySelector("#cc").value,
+                      correo: sc.querySelector("#cmail").value};
       const r = await fetch(ruta, {method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({usuario: sc.querySelector("#cu").value, clave: sc.querySelector("#cc").value})});
+        body: JSON.stringify(cuerpo)});
       const d = await r.json();
       if (!r.ok) { msg.textContent = d.error || "No ha podido ser."; return; }
+      if (ruta === "/api/recuperar") {
+        msg.innerHTML = "Clave cambiada: <b>entra ya con la nueva</b>.";
+        modo = "entrar"; mail.style.display = "none";
+        sc.querySelector("#cclabel").textContent = "Clave (mínimo 6)";
+        return;
+      }
       try { localStorage.setItem("vitrina:token", d.token); } catch (e) { /* sesión sólo en memoria */ }
       sc.remove();
       say(`Dentro. Hola, <b>${esc(d.usuario)}</b>: esta es tu colección.`);
       shareInit();
     } catch (e) { msg.textContent = "El servidor no responde."; }
   }
-  sc.querySelector("#centra").onclick = () => manda("/api/acceso");
-  sc.querySelector("#ccrea").onclick = () => manda("/api/registro");
-  sc.querySelector("#cc").onkeydown = e => { if (e.key === "Enter") manda("/api/acceso"); };
+  sc.querySelector("#centra").onclick = () => {
+    if (modo === "recuperar") return manda("/api/recuperar");
+    mail.style.display = "none"; modo = "entrar"; manda("/api/acceso");
+  };
+  sc.querySelector("#ccrea").onclick = () => {
+    if (mail.style.display === "none") {       // primer toque: pide el correo
+      mail.style.display = "flex"; modo = "crear";
+      msg.textContent = "Pon tu correo y vuelve a pulsar «Crear cuenta».";
+      return;
+    }
+    manda("/api/registro");
+  };
+  sc.querySelector("#colvido").onclick = e => {
+    e.preventDefault();
+    modo = "recuperar"; mail.style.display = "flex";
+    sc.querySelector("#cclabel").textContent = "Clave NUEVA (mínimo 6)";
+    msg.textContent = "Pon tu usuario, tu correo y la clave nueva, y pulsa «Entrar».";
+  };
+  sc.querySelector("#cc").onkeydown = e => { if (e.key === "Enter") sc.querySelector("#centra").click(); };
 }
 
 async function shareInit() {
@@ -2918,11 +2948,35 @@ function openEditor(card) {
           });
         }
         if (hint) hint.innerHTML = `<span class="spin"></span> Leyendo la carta…`;
-        const r = await Tesseract.recognize(f, "eng");
-        const texto = (r && r.data && r.data.text || "").toUpperCase();
-        const code = (texto.match(/\b[A-Z]{2,4}\d{1,2}-\d{1,3}\b/) || [])[0]     // OP05-060, ST13-001
-          || (texto.match(/\b\d{1,3}\s*\/\s*\d{1,3}\b/) || [])[0]              // 091/086
-          || (texto.match(/\b[A-Z]{2,5}\s?\d{2,3}\b/) || [])[0];                 // PBL 091
+        /* Primero la franja inferior (donde vive el código), luego la carta entera. */
+        const franja = await new Promise(res => {
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const cv = document.createElement("canvas");
+              cv.width = img.naturalWidth; cv.height = Math.round(img.naturalHeight * 0.24);
+              cv.getContext("2d").drawImage(img, 0, -Math.round(img.naturalHeight * 0.76));
+              cv.toBlob(b => res(b), "image/png");
+            } catch (e2) { res(null); }
+          };
+          img.onerror = () => res(null);
+          img.src = URL.createObjectURL(f);
+        });
+        let texto = "";
+        for (const trozo of [franja, f]) {
+          if (!trozo) continue;
+          const r = await Tesseract.recognize(trozo, "eng");
+          texto = (r && r.data && r.data.text || "").toUpperCase();
+          if (leeCodigo(texto)) break;      // la franja ya lo tenía: no hace falta más
+        }
+        function leeCodigo(t) {
+          const m = t.match(/\b([A-Z]{2,4})\s*0*(\d{1,3})\s*\/\s*(\d{1,3})\b/);   // PBL 091/086
+          if (m) return m[1] + " " + m[2];
+          return (t.match(/\b[A-Z]{2,4}\d{1,2}-\d{1,3}\b/) || [])[0]                 // OP05-060
+            || (t.match(/\b\d{1,3}\s*\/\s*\d{1,3}\b/) || [])[0]                   // 091/086
+            || (() => { const x = t.match(/\b([A-Z]{2,4})\s?0*(\d{1,3})\b/); return x && !/^(HP|LV|NO)$/.test(x[1]) ? x[1] + " " + x[2] : null; })();
+        }
+        const code = leeCodigo(texto);
         if (!code) {
           if (hint) hint.textContent = "No he sabido leer ningún código en esa foto. Prueba con más luz y la esquina del número enfocada.";
           return;
