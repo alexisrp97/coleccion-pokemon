@@ -198,6 +198,8 @@ def main():
     s = sub.add_parser("serve", help="abre la vitrina en el navegador")
     s.add_argument("--port", type=int)
     s.add_argument("--no-browser", action="store_true")
+    s.add_argument("--solo", action="store_true", help="sólo este ordenador, sin compartir en la wifi")
+    s.add_argument("--cuentas", action="store_true", help="web pública: cada persona con su cuenta y su colección")
     s.set_defaults(fn=cmd_serve)
 
     a = sub.add_parser("art", help="prepara los fondos de cada sección")
