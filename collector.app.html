@@ -2798,6 +2798,11 @@ function render() {
     const atiro = cards.filter(c => c.wish && num(c.wish_target) != null && c.unit_value > 0 &&
       c.unit_value <= num(c.wish_target));
     const nel = document.getElementById("note");
+    if (SHARED && atiro.length) atiro.slice(0, 5).forEach(c =>
+      fetch("/api/aviso", {method: "POST",
+        headers: Object.assign({"Content-Type": "application/json"}, cab()),
+        body: JSON.stringify({carta: c.name, precio: eur(c.unit_value), objetivo: eur(num(c.wish_target))})
+      }).catch(() => {}));      // el servidor decide si toca correo (uno al día por carta)
     if (nel) nel.innerHTML = atiro.length
       ? `🎯 <b>A tiro:</b> ` + atiro.slice(0, 4).map(c =>
           `${esc(c.name)} a <b>${eur(c.unit_value)}</b> (objetivo ${eur(num(c.wish_target))})`).join(" · ")

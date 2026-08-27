@@ -14,6 +14,31 @@ import threading
 import hashlib
 import secrets
 import datetime
+import hashlib
+import hmac
+import os
+import smtplib
+from email.mime.text import MIMEText
+
+
+def _manda_correo(dest, asunto, cuerpo):
+    """Envía un correo con las llaves SMTP del ambiente. Devuelve si pudo."""
+    host = os.environ.get("SMTP_HOST")
+    user = os.environ.get("SMTP_USER")
+    clave = os.environ.get("SMTP_PASS")
+    de = os.environ.get("SMTP_FROM") or user
+    if not (host and user and clave and dest):
+        return False
+    try:
+        m = MIMEText(cuerpo, "plain", "utf-8")
+        m["Subject"], m["From"], m["To"] = asunto, de, dest
+        with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT", "587")), timeout=12) as smtp:
+            smtp.starttls()
+            smtp.login(user, clave)
+            smtp.sendmail(de, [dest], m.as_string())
+        return True
+    except Exception:   # noqa: BLE001
+        return False
 STATE_LOCK = threading.Lock()
 
 
@@ -287,6 +312,64 @@ def make_handler(con, config):
                     return self._json({"token": token, "usuario": nombre})
                 except Exception as exc:   # noqa: BLE001
                     return self._error(exc, 500)
+
+            if path == "/api/aviso":
+                uid = self._uid()
+                if not uid:
+                    return self._error("hace falta entrar con tu cuenta", 401)
+                try:
+                    body = self._body()
+                    nombre_carta = str(body.get("carta") or "")[:80]
+                    if not nombre_carta:
+                        return self._error("falta la carta")
+                    hoy = datetime.date.today().isoformat()
+                    marca = f"aviso:{uid}:{nombre_carta}"
+                    with STATE_LOCK:
+                        if db.get_meta(con, marca) == hoy:
+                            return self._json({"enviado": False, "motivo": "ya avisado hoy"})
+                        correo = (con.execute("SELECT email FROM users WHERE id=?", (uid,)).fetchone() or [None])[0]
+                    precio = str(body.get("precio") or "?")
+                    objetivo = str(body.get("objetivo") or "?")
+                    cuerpo = (f"¡{nombre_carta} está a tiro!\n\n"
+                              f"Precio ahora: {precio} — tu objetivo: {objetivo}.\n\n"
+                              f"Corre a por ella. — collector.app")
+                    ok = _manda_correo(correo, f"🎯 A tiro: {nombre_carta}", cuerpo)
+                    if ok:
+                        with STATE_LOCK:
+                            db.set_meta(con, marca, hoy)
+                            con.commit()
+                    return self._json({"enviado": bool(ok)})
+                except Exception as exc:   # noqa: BLE001
+                    return self._error(exc, 500)
+
+            if path == "/api/stripe/hook":
+                secreto = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+                if not secreto:
+                    return self._error("webhook sin configurar", 503)
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                    crudo = self.rfile.read(length)
+                    firma = self.headers.get("Stripe-Signature", "")
+                    partes = dict(p.split("=", 1) for p in firma.split(",") if "=" in p)
+                    esperada = hmac.new(secreto.encode(), f"{partes.get('t','')}.".encode() + crudo,
+                                        hashlib.sha256).hexdigest()
+                    if not hmac.compare_digest(esperada, partes.get("v1", "")):
+                        return self._error("firma incorrecta", 400)
+                    evento = json.loads(crudo.decode("utf-8"))
+                    tipo = evento.get("type", "")
+                    obj = (evento.get("data") or {}).get("object") or {}
+                    correo = ((obj.get("customer_details") or {}).get("email")
+                              or obj.get("customer_email") or "").strip().lower()
+                    if tipo in ("checkout.session.completed", "invoice.paid") and correo:
+                        with STATE_LOCK:
+                            r = con.execute("UPDATE users SET premium=1 WHERE email=?", (correo,))
+                            if not r.rowcount:
+                                db.set_meta(con, f"pago-sin-usuario:{correo}",
+                                            datetime.date.today().isoformat())
+                            con.commit()
+                    return self._json({"ok": True})
+                except Exception as exc:   # noqa: BLE001
+                    return self._error(exc, 400)
 
             if path == "/api/recuperar":
                 try:
