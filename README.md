@@ -9,7 +9,7 @@ sube nada a ningún sitio y la base de datos es un fichero SQLite tuyo.
 ## Arrancar
 
 ```bash
-python3 tcg.py
+python3 app.py
 ```
 
 Abre `http://127.0.0.1:8765` en el navegador. Se queda escuchando sólo en tu
@@ -18,12 +18,12 @@ máquina.
 Otros comandos:
 
 ```bash
-python3 tcg.py sync              # importa los ficheros de data/
-python3 tcg.py list              # la colección en el terminal
-python3 tcg.py total             # sólo el valor total
-python3 tcg.py export cartas.csv
-python3 tcg.py importar copia.json     # copia hecha en collector.app
-python3 tcg.py fotos                   # baja al disco la foto de cada carta
+python3 app.py sync              # importa los ficheros de data/
+python3 app.py list              # la colección en el terminal
+python3 app.py total             # sólo el valor total
+python3 app.py export cartas.csv
+python3 app.py importar copia.json     # copia hecha en collector.app
+python3 app.py fotos                   # baja al disco la foto de cada carta
 ```
 
 ## Precios de Cardmarket
@@ -35,7 +35,7 @@ Cardmarket publica dos ficheros en <https://www.cardmarket.com/Data/Download>
 - **catálogo de productos** — se actualiza cuando sale una expansión
 
 Descarga los de Pokémon y One Piece, déjalos en `data/` y pulsa **Sincronizar
-precios** (o `python3 tcg.py sync`). El importador reconoce solo el formato
+precios** (o `python3 app.py sync`). El importador reconoce solo el formato
 —CSV, JSON o comprimido en gzip— y los nombres de las columnas, porque
 Cardmarket los ha ido cambiando.
 
@@ -59,7 +59,7 @@ Sincroniza a diario y en cinco días tienes las cinco últimas. Si quieres que
 sea automático, en Linux o Mac basta con un cron:
 
 ```
-0 9 * * * cd /ruta/a/coleccion-tcg && /usr/bin/python3 tcg.py sync
+0 9 * * * cd /ruta/a/coleccion-tcg && /usr/bin/python3 app.py sync
 ```
 
 Puedes valorar con `AVG7` (por defecto, el más estable), `Trend`, `AVG1`,
@@ -116,12 +116,12 @@ de duela, béisbol en rojo de tierra batida.
 **Pokémon se llena solo:**
 
 ```bash
-python3 tcg.py art
+python3 app.py art
 ```
 
 Descarga la ilustración oficial de los Pokémon más conocidos desde PokéAPI,
 que es pública, gratuita y no pide clave. Puedes pedir otros por nombre:
-`python3 tcg.py art pokemon mewtwo gengar tyranitar`.
+`python3 app.py art pokemon mewtwo gengar tyranitar`.
 
 **Las demás las pones tú.** Deja las imágenes que quieras en su carpeta:
 
@@ -171,14 +171,14 @@ Con mil cartas o más:
   **Importar lista**. La **Plantilla CSV** enseña las columnas; reconoce
   nombres en español o en inglés en cualquier orden.
 - Para pasar la colección del navegador a esta versión: descarga la copia
-  `.json` desde la app y ejecuta `python3 tcg.py importar collector-app-FECHA.json`.
-  Aquí no hay límite de espacio y `python3 tcg.py fotos` guarda las imágenes
+  `.json` desde la app y ejecuta `python3 app.py importar collector-app-FECHA.json`.
+  Aquí no hay límite de espacio y `python3 app.py fotos` guarda las imágenes
   en disco.
 
 ## Estructura
 
 ```
-tcg.py              arranque y comandos
+app.py              arranque y comandos
 tcg/db.py           SQLite: cartas, ventas, catálogo, historial de precios
 tcg/cardmarket.py   importador de ficheros + cliente OAuth 1.0a
 tcg/valuation.py    valor, tendencia y avisos (POP bajo, etc.)
@@ -196,7 +196,7 @@ coleccion.db        tu colección
 ## Compartir la colección (móvil, otro ordenador, dos personas a la vez)
 
 1. En el Mac que hará de servidor, doble clic en **«Compartir en la wifi.command»**
-   (o en el terminal: `python3 tcg.py serve`).
+   (o en el terminal: `python3 app.py serve`).
 2. El terminal enseña dos direcciones. La segunda, del estilo
    `http://192.168.1.34:8765/`, es la que se escribe en el navegador del móvil
    o del otro ordenador (misma wifi).
@@ -211,7 +211,7 @@ Notas:
 - Las **fotos guardadas** siguen siendo locales de cada aparato (pesan mucho);
   las imágenes normales de las cartas se ven igual en todos.
 - Sólo funciona dentro de tu wifi: nada sale a internet. Para usarlo tú solo
-  sin compartir: `python3 tcg.py serve --solo`.
+  sin compartir: `python3 app.py serve --solo`.
 
 ## Paquetes de cartas (compartir a distancia, sin wifi común)
 
@@ -223,12 +223,12 @@ las que ya tuviera (mismo nombre, número, colección y variante) se saltan sola
 
 ## Web pública con cuentas (cada persona su colección)
 
-Arranca con `python3 tcg.py serve --cuentas`. Al abrir la app pedirá crear
+Arranca con `python3 app.py serve --cuentas`. Al abrir la app pedirá crear
 cuenta o entrar (nombre + clave de 6+); cada usuario guarda y sincroniza su
 propia colección, aislada de las demás. El botón «Salir (nombre)» cierra la
 sesión. Sin `--cuentas` todo sigue como siempre: base compartida en la wifi.
 
 Para subirlo a internet (Railway, Render, PythonAnywhere): despliega esta
-carpeta, comando de arranque `python3 tcg.py serve --cuentas --port $PORT`,
+carpeta, comando de arranque `python3 app.py serve --cuentas --port $PORT`,
 y el hosting pone el HTTPS. Desde el móvil, «Añadir a pantalla de inicio»
 instala la app con su icono (PWA).

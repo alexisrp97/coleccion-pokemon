@@ -4,7 +4,7 @@
 1. Entra en github.com → Sign up (cuenta gratis).
 2. Botón «+» arriba a la derecha → **New repository** → nombre `collector-app` → Create.
 3. En la página del repositorio: enlace «uploading an existing file».
-4. Arrastra TODO el contenido de esta carpeta (tcg.py, la carpeta tcg,
+4. Arrastra TODO el contenido de esta carpeta (app.py, app.py, la carpeta vitrina CON TODO lo de dentro,
    collector.app.html, Procfile, requirements.txt, icon.png, README...)
    → botón verde **Commit changes**.
 
@@ -14,7 +14,7 @@
 3. Rellena:
    - Language: **Python 3**
    - Build command: (déjalo como está)
-   - Start command: `python3 tcg.py serve --cuentas --port $PORT`
+   - Start command: `python3 app.py serve --cuentas --port $PORT`
    - Instance type: **Free**
 4. **Deploy Web Service** y espera 2-3 minutos.
 5. Arriba aparece tu dirección: `https://collector-app-XXXX.onrender.com` ← tu web.

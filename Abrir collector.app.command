@@ -3,4 +3,4 @@
 # abrir, haz clic derecho sobre este fichero y elige "Abrir".
 cd "$(dirname "$0")"
 echo "Arrancando collector.app…"
-python3 tcg.py
+python3 app.py

@@ -1,1 +1,1 @@
-web: python3 tcg.py serve --cuentas --port $PORT
+web: python3 app.py serve --cuentas --port $PORT
