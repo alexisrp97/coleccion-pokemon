@@ -1,0 +1,1 @@
+# collector.app no necesita librerías externas: todo es Python de serie.

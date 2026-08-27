@@ -1,0 +1,9 @@
+{
+  "basis": "avg7",
+  "port": 8765,
+  "psa_token": "",
+  "app_token": "",
+  "app_secret": "",
+  "access_token": "",
+  "access_secret": ""
+}
