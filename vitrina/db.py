@@ -224,9 +224,15 @@ def search_products(con, q, limit=25):
 
 
 def ensure_users(con):
+    try:
+        con.execute("ALTER TABLE users ADD COLUMN email TEXT")
+        con.commit()
+    except Exception:
+        pass
     con.execute("""CREATE TABLE IF NOT EXISTS users(
         id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
-        salt TEXT NOT NULL, hash TEXT NOT NULL, created TEXT NOT NULL)""")
+        salt TEXT NOT NULL, hash TEXT NOT NULL, created TEXT NOT NULL,
+        email TEXT)""")
     con.execute("""CREATE TABLE IF NOT EXISTS tokens(
         token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created TEXT NOT NULL)""")
     con.commit()
