@@ -1,0 +1,7 @@
+Deja aquí los ficheros descargados de https://www.cardmarket.com/Data/Download
+
+  - guía de precios  -> el nombre debe contener "price" o "guide"
+  - catálogo         -> el nombre debe contener "product" o "catalog"
+
+Sirven .csv, .json y .gz. Luego pulsa "Sincronizar precios" en la app
+o ejecuta:  python3 tcg.py sync
