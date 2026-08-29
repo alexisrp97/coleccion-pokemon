@@ -42,6 +42,17 @@ def _manda_correo(dest, asunto, cuerpo):
 STATE_LOCK = threading.Lock()
 
 
+def _manda_codigo(con, uid, nombre, correo):
+    """Genera un código de 6 cifras, lo guarda 15 minutos y lo manda por correo."""
+    codigo = f"{secrets.randbelow(1_000_000):06d}"
+    vence = (datetime.datetime.utcnow() + datetime.timedelta(minutes=15)).isoformat()
+    db.set_meta(con, f"emailcode:{uid}", f"{codigo}:{vence}")
+    con.commit()
+    cuerpo = (f"Hola, {nombre}:\n\nTu código para verificar el correo de collector.app es:\n\n"
+              f"    {codigo}\n\nCaduca en 15 minutos. Si no lo has pedido tú, ignora este correo.")
+    return _manda_correo(correo, "Tu código de collector.app: " + codigo, cuerpo)
+
+
 def _hash_clave(clave, salt):
     return hashlib.pbkdf2_hmac("sha256", clave.encode(), bytes.fromhex(salt), 200_000).hex()
 
@@ -158,12 +169,13 @@ def make_handler(con, config):
                     uid = self._uid()
                     if not uid:
                         return self._error("hace falta entrar con tu cuenta", 401)
-                    row = con.execute("SELECT name, email, created FROM users WHERE id=?", (uid,)).fetchone()
+                    row = con.execute("SELECT name, email, created, public, email_ok FROM users WHERE id=?",
+                                       (uid,)).fetchone()
                     if not row:
                         return self._error("cuenta no encontrada", 404)
-                    pub = con.execute("SELECT public FROM users WHERE id=?", (uid,)).fetchone()
                     return self._json({"usuario": row[0], "correo": row[1] or "",
-                                       "alta": (row[2] or "")[:10], "publico": bool(pub and pub[0])})
+                                       "alta": (row[2] or "")[:10], "publico": bool(row[3]),
+                                       "correo_verificado": bool(row[4])})
 
                 if url.path == "/api/admin":
                     uid = self._uid()
@@ -303,6 +315,7 @@ def make_handler(con, config):
                                         (nombre, salt, _hash_clave(clave, salt),
                                          datetime.datetime.utcnow().isoformat(), correo))
                             uid = con.execute("SELECT id FROM users WHERE name=?", (nombre,)).fetchone()[0]
+                            _manda_codigo(con, uid, nombre, correo)
                         else:
                             if not row or not secrets.compare_digest(row[2], _hash_clave(clave, row[1])):
                                 return self._error("nombre o clave incorrectos", 401)
@@ -389,6 +402,48 @@ def make_handler(con, config):
                 except Exception as exc:   # noqa: BLE001
                     return self._error(exc, 400)
 
+            if path == "/api/email/verificar":
+                uid = self._uid()
+                if not uid:
+                    return self._error("hace falta entrar con tu cuenta", 401)
+                try:
+                    codigo = str(self._body().get("codigo") or "").strip()
+                    with STATE_LOCK:
+                        guardado = db.get_meta(con, f"emailcode:{uid}") or ""
+                        cod, _, vence = guardado.partition(":")
+                        if not cod:
+                            return self._error("pide un código nuevo")
+                        if datetime.datetime.utcnow().isoformat() > vence:
+                            return self._error("ese código caducó: pide uno nuevo")
+                        if not secrets.compare_digest(cod, codigo):
+                            return self._error("código incorrecto")
+                        con.execute("UPDATE users SET email_ok=1 WHERE id=?", (uid,))
+                        db.set_meta(con, f"emailcode:{uid}", "")
+                        con.commit()
+                    return self._json({"hecho": True})
+                except Exception as exc:   # noqa: BLE001
+                    return self._error(exc, 500)
+
+            if path == "/api/email/reenviar":
+                uid = self._uid()
+                if not uid:
+                    return self._error("hace falta entrar con tu cuenta", 401)
+                try:
+                    with STATE_LOCK:
+                        ultima = db.get_meta(con, f"emailcode_at:{uid}") or ""
+                        ahora = datetime.datetime.utcnow()
+                        if ultima and (ahora - datetime.datetime.fromisoformat(ultima)).total_seconds() < 45:
+                            return self._error("espera un momento antes de pedir otro código", 429)
+                        row = con.execute("SELECT name, email FROM users WHERE id=?", (uid,)).fetchone()
+                        if not row or not row[1]:
+                            return self._error("tu cuenta no tiene correo vinculado")
+                        db.set_meta(con, f"emailcode_at:{uid}", ahora.isoformat())
+                        con.commit()
+                    ok = _manda_codigo(con, uid, row[0], row[1])
+                    return self._json({"enviado": bool(ok)})
+                except Exception as exc:   # noqa: BLE001
+                    return self._error(exc, 500)
+
             if path == "/api/recuperar":
                 try:
                     body = self._body()
@@ -434,7 +489,7 @@ def make_handler(con, config):
                                 return self._error("ese correo no parece válido")
                             if con.execute("SELECT 1 FROM users WHERE email=? AND id<>?", (nc, uid)).fetchone():
                                 return self._error("ese correo ya lo usa otra cuenta")
-                            con.execute("UPDATE users SET email=? WHERE id=?", (nc, uid))
+                            con.execute("UPDATE users SET email=?, email_ok=0 WHERE id=?", (nc, uid))
                         if "publico" in body:
                             con.execute("UPDATE users SET public=? WHERE id=?",
                                         (1 if body["publico"] else 0, uid))

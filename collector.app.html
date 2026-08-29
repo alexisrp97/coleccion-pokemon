@@ -1073,6 +1073,56 @@ function urlEbay(texto) {
   return PLAN.ebay ? base + "&campid=" + encodeURIComponent(PLAN.ebay) + "&mkcid=1&mkrid=1185-53479-19255-0&toolid=10001&mkevt=1" : base;
 }
 
+/* ---------------- verificación del correo con código de 6 cifras ---------------- */
+function panelVerificar(recienCreada) {
+  const sc = document.createElement("div");
+  sc.className = "scrim";
+  sc.innerHTML = `<div class="sheet" style="max-width:24rem;text-align:center">
+    <h3 style="margin:.2rem 0">✉️ Verifica tu correo</h3>
+    <p class="hint" style="margin:.5rem 0 1rem">
+      ${recienCreada ? "Te hemos mandado un código de 6 cifras. " : ""}Ponlo aquí para confirmar tu correo
+      (te sirve para recuperar la clave y para el cazador de deseos).</p>
+    <div class="fields">
+      <label class="f wide"><span>Código de 6 cifras</span>
+        <input id="vcode" inputmode="numeric" maxlength="6" autocomplete="one-time-code"
+          style="text-align:center;font:600 1.3rem/1 'IBM Plex Mono',monospace;letter-spacing:.35em"></label>
+    </div>
+    <p class="hint" id="vmsg" style="min-height:1.1em"></p>
+    <button class="primary" id="vok" style="width:100%">Verificar</button>
+    <p class="hint" style="margin-top:.7rem">
+      <a href="#" id="vreenv" style="color:var(--accent)">Reenviar código</a> ·
+      <a href="#" id="vluego" style="color:var(--dim)">Ahora no</a></p>
+  </div>`;
+  document.body.appendChild(sc);
+  const msg = sc.querySelector("#vmsg");
+  sc.querySelector("#vcode").focus();
+  sc.querySelector("#vluego").onclick = e => { e.preventDefault(); sc.remove(); };
+  sc.querySelector("#vreenv").onclick = async e => {
+    e.preventDefault();
+    msg.textContent = "Mandando otro código…";
+    try {
+      const r = await fetch("/api/email/reenviar", {method: "POST", headers: cab()});
+      const d = await r.json();
+      msg.textContent = r.ok ? "Código nuevo en camino." : (d.error || "No ha podido ser.");
+    } catch (e2) { msg.textContent = "El servidor no responde."; }
+  };
+  const confirma = async () => {
+    const codigo = sc.querySelector("#vcode").value.trim();
+    if (codigo.length !== 6) { msg.textContent = "El código tiene 6 cifras."; return; }
+    msg.textContent = "Comprobando…";
+    try {
+      const r = await fetch("/api/email/verificar", {method: "POST",
+        headers: Object.assign({"Content-Type": "application/json"}, cab()), body: JSON.stringify({codigo})});
+      const d = await r.json();
+      if (!r.ok) { msg.textContent = d.error || "No ha podido ser."; return; }
+      sc.remove();
+      say("Correo verificado. ✓");
+    } catch (e2) { msg.textContent = "El servidor no responde."; }
+  };
+  sc.querySelector("#vok").onclick = confirma;
+  sc.querySelector("#vcode").onkeydown = e => { if (e.key === "Enter") confirma(); };
+}
+
 function pintaSalir(nombre) {
   if (document.getElementById("uavatar")) return;
   const b = document.createElement("button");
@@ -1099,7 +1149,10 @@ async function panelPerfil(nombre) {
     <div class="pdatos">
       <span class="pava">${esc((datos.usuario || "?").slice(0, 1).toUpperCase())}</span>
       <div><b>${esc(datos.usuario || "")}</b><br>
-        <span class="dim">${esc(datos.correo || "sin correo")}</span><br>
+        <span class="dim">${esc(datos.correo || "sin correo")}</span>
+        ${datos.correo ? (datos.correo_verificado
+          ? ' <span style="color:#7ec98a">✓ verificado</span>'
+          : ' <span style="color:#e0a53d">· sin verificar</span>') : ""}<br>
         ${datos.alta ? `<span class="dim mono" style="font-size:.7rem">en la vitrina desde ${esc(datos.alta)}</span>` : ""}</div>
     </div>
     <div class="pops">
@@ -1107,6 +1160,7 @@ async function panelPerfil(nombre) {
       ${datos.publico ? `<p class="hint" style="margin:0">Tu enlace: <b>${esc(location.origin)}/@${esc(datos.usuario)}</b>
         <button class="ghost sm" id="pcopia">Copiar</button></p>` : ""}
       <button class="ghost" id="padmin" style="display:none">👑 Panel del dueño</button>
+      ${datos.correo && !datos.correo_verificado ? `<button class="ghost" id="pveri">✉️ Verificar el correo</button>` : ""}
       <button class="ghost" data-pop="clave">Cambiar la clave</button>
       <button class="ghost" data-pop="usuario">Cambiar el nombre de usuario</button>
       <button class="ghost" data-pop="correo">Cambiar el correo vinculado</button>
@@ -1127,6 +1181,8 @@ async function panelPerfil(nombre) {
   const etiquetas = {clave: "Clave NUEVA (mínimo 6)", usuario: "Nombre de usuario nuevo", correo: "Correo nuevo"};
   sc.onclick = e => { if (e.target === sc || e.target.id === "pcerr") sc.remove(); };
   sc.querySelector("#psalir").onclick = cerrarSesion;
+  const pv = sc.querySelector("#pveri");
+  if (pv) pv.onclick = () => { sc.remove(); panelVerificar(false); };
   sc.querySelector("#ppub").onclick = () => {
     campo = "publico";
     sc.querySelector("#pform").style.display = "block";
@@ -1170,7 +1226,8 @@ async function panelPerfil(nombre) {
       if (av && d.usuario) { av.textContent = d.usuario.slice(0, 1).toUpperCase(); av.title = "Tu cuenta (" + d.usuario + ")"; }
       say(campo === "publico" ? (datos.publico ? "Vitrina pública cerrada." : `Vitrina abierta: comparte <b>${esc(location.origin)}/@${esc(d.usuario)}</b>`)
         : campo === "clave" ? "Clave cambiada. Tus otras sesiones se han cerrado por seguridad."
-        : campo === "usuario" ? `Ahora eres <b>${esc(d.usuario)}</b>.` : "Correo actualizado.");
+        : campo === "usuario" ? `Ahora eres <b>${esc(d.usuario)}</b>.` : "Correo actualizado: verifícalo cuando puedas.");
+      if (campo === "correo") panelVerificar(true);
       if (campo === "usuario") mark("cuenta: " + d.usuario);
     } catch (e) { msg.textContent = "El servidor no responde."; }
   };
@@ -1218,6 +1275,7 @@ function pideCuenta() {
       try { localStorage.setItem("vitrina:token", d.token); } catch (e) { /* sesión sólo en memoria */ }
       sc.remove();
       say(`Dentro. Hola, <b>${esc(d.usuario)}</b>: esta es tu colección.`);
+      if (ruta === "/api/registro") panelVerificar(true);
       shareInit();
     } catch (e) { msg.textContent = "El servidor no responde."; }
   }
@@ -2798,7 +2856,7 @@ function render() {
     const atiro = cards.filter(c => c.wish && num(c.wish_target) != null && c.unit_value > 0 &&
       c.unit_value <= num(c.wish_target));
     const nel = document.getElementById("note");
-    if (SHARED && atiro.length) atiro.slice(0, 5).forEach(c =>
+    if (SHARED && esPremium() && atiro.length) atiro.slice(0, 5).forEach(c =>
       fetch("/api/aviso", {method: "POST",
         headers: Object.assign({"Content-Type": "application/json"}, cab()),
         body: JSON.stringify({carta: c.name, precio: eur(c.unit_value), objetivo: eur(num(c.wish_target))})

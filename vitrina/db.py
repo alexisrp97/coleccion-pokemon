@@ -230,14 +230,15 @@ def ensure_users(con):
         id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
         salt TEXT NOT NULL, hash TEXT NOT NULL, created TEXT NOT NULL,
         email TEXT, public INTEGER DEFAULT 0, premium INTEGER DEFAULT 0,
-        stripe_customer TEXT)""")
+        stripe_customer TEXT, email_ok INTEGER DEFAULT 0)""")
     con.execute("""CREATE TABLE IF NOT EXISTS tokens(
         token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created TEXT NOT NULL)""")
     con.commit()
     for cambio in ("ALTER TABLE users ADD COLUMN email TEXT",
                    "ALTER TABLE users ADD COLUMN public INTEGER DEFAULT 0",
                    "ALTER TABLE users ADD COLUMN premium INTEGER DEFAULT 0",
-                   "ALTER TABLE users ADD COLUMN stripe_customer TEXT"):
+                   "ALTER TABLE users ADD COLUMN stripe_customer TEXT",
+                   "ALTER TABLE users ADD COLUMN email_ok INTEGER DEFAULT 0"):
         try:
             con.execute(cambio)
             con.commit()
