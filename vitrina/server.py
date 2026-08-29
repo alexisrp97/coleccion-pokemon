@@ -37,7 +37,8 @@ def _manda_correo(dest, asunto, cuerpo):
             smtp.login(user, clave)
             smtp.sendmail(de, [dest], m.as_string())
         return True
-    except Exception:   # noqa: BLE001
+    except Exception as exc:   # noqa: BLE001
+        print(f"[correo] fallo enviando a {dest!r}: {exc!r}", flush=True)
         return False
 STATE_LOCK = threading.Lock()
 
@@ -491,6 +492,11 @@ def make_handler(con, config):
                                 return self._error("ese correo ya lo usa otra cuenta")
                             con.execute("UPDATE users SET email=?, email_ok=0 WHERE id=?", (nc, uid))
                         if "publico" in body:
+                            if body["publico"]:
+                                fila = con.execute("SELECT email_ok FROM users WHERE id=?", (uid,)).fetchone()
+                                if not (fila and fila[0]):
+                                    return self._error(
+                                        "verifica tu correo antes de abrir la vitrina pública", 403)
                             con.execute("UPDATE users SET public=? WHERE id=?",
                                         (1 if body["publico"] else 0, uid))
                         if body.get("nueva_clave"):
