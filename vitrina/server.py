@@ -296,6 +296,8 @@ def make_handler(con, config):
                         if path == "/api/registro":
                             if row:
                                 return self._error("ese nombre ya está cogido", 409)
+                            if con.execute("SELECT 1 FROM users WHERE email=?", (correo,)).fetchone():
+                                return self._error("ese correo ya tiene una cuenta: entra con ella o recupera la clave", 409)
                             salt = secrets.token_hex(16)
                             con.execute("INSERT INTO users(name, salt, hash, created, email) VALUES(?,?,?,?,?)",
                                         (nombre, salt, _hash_clave(clave, salt),
@@ -318,6 +320,10 @@ def make_handler(con, config):
                 if not uid:
                     return self._error("hace falta entrar con tu cuenta", 401)
                 try:
+                    with STATE_LOCK:
+                        row = con.execute("SELECT premium, email FROM users WHERE id=?", (uid,)).fetchone()
+                    if not row or not (row[0] or uid == 1):
+                        return self._error("el cazador por correo es cosa de Premium", 402)
                     body = self._body()
                     nombre_carta = str(body.get("carta") or "")[:80]
                     if not nombre_carta:
@@ -327,7 +333,7 @@ def make_handler(con, config):
                     with STATE_LOCK:
                         if db.get_meta(con, marca) == hoy:
                             return self._json({"enviado": False, "motivo": "ya avisado hoy"})
-                        correo = (con.execute("SELECT email FROM users WHERE id=?", (uid,)).fetchone() or [None])[0]
+                        correo = row[1]
                     precio = str(body.get("precio") or "?")
                     objetivo = str(body.get("objetivo") or "?")
                     cuerpo = (f"¡{nombre_carta} está a tiro!\n\n"
@@ -414,6 +420,8 @@ def make_handler(con, config):
                             nc = str(body["nuevo_correo"]).strip().lower()
                             if not ("@" in nc and "." in nc.split("@")[-1] and 5 <= len(nc) <= 120):
                                 return self._error("ese correo no parece válido")
+                            if con.execute("SELECT 1 FROM users WHERE email=? AND id<>?", (nc, uid)).fetchone():
+                                return self._error("ese correo ya lo usa otra cuenta")
                             con.execute("UPDATE users SET email=? WHERE id=?", (nc, uid))
                         if "publico" in body:
                             con.execute("UPDATE users SET public=? WHERE id=?",
