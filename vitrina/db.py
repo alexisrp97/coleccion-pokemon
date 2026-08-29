@@ -224,21 +224,25 @@ def search_products(con, q, limit=25):
 
 
 def ensure_users(con):
+    # primero la tabla (con TODAS las columnas actuales, por si nace de cero);
+    # las ALTER de después son sólo para bases antiguas que ya existían sin ellas.
+    con.execute("""CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+        salt TEXT NOT NULL, hash TEXT NOT NULL, created TEXT NOT NULL,
+        email TEXT, public INTEGER DEFAULT 0, premium INTEGER DEFAULT 0,
+        stripe_customer TEXT)""")
+    con.execute("""CREATE TABLE IF NOT EXISTS tokens(
+        token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created TEXT NOT NULL)""")
+    con.commit()
     for cambio in ("ALTER TABLE users ADD COLUMN email TEXT",
                    "ALTER TABLE users ADD COLUMN public INTEGER DEFAULT 0",
-                   "ALTER TABLE users ADD COLUMN premium INTEGER DEFAULT 0"):
+                   "ALTER TABLE users ADD COLUMN premium INTEGER DEFAULT 0",
+                   "ALTER TABLE users ADD COLUMN stripe_customer TEXT"):
         try:
             con.execute(cambio)
             con.commit()
         except Exception:
             pass
-    con.execute("""CREATE TABLE IF NOT EXISTS users(
-        id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
-        salt TEXT NOT NULL, hash TEXT NOT NULL, created TEXT NOT NULL,
-        email TEXT, public INTEGER DEFAULT 0, premium INTEGER DEFAULT 0)""")
-    con.execute("""CREATE TABLE IF NOT EXISTS tokens(
-        token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created TEXT NOT NULL)""")
-    con.commit()
 
 
 def set_meta(con, key, value):

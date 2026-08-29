@@ -366,12 +366,24 @@ def make_handler(con, config):
                     obj = (evento.get("data") or {}).get("object") or {}
                     correo = ((obj.get("customer_details") or {}).get("email")
                               or obj.get("customer_email") or "").strip().lower()
+                    cliente = str(obj.get("customer") or "") or None
                     if tipo in ("checkout.session.completed", "invoice.paid") and correo:
                         with STATE_LOCK:
-                            r = con.execute("UPDATE users SET premium=1 WHERE email=?", (correo,))
+                            if cliente:
+                                r = con.execute("UPDATE users SET premium=1, stripe_customer=? WHERE email=?",
+                                                (cliente, correo))
+                            else:
+                                r = con.execute("UPDATE users SET premium=1 WHERE email=?", (correo,))
                             if not r.rowcount:
                                 db.set_meta(con, f"pago-sin-usuario:{correo}",
                                             datetime.date.today().isoformat())
+                            con.commit()
+                    # se cancela la suscripción o falla el cobro: se retira el Premium
+                    # (nunca al dueño, uid==1, que lo tiene de serie por ser el dueño)
+                    if tipo in ("customer.subscription.deleted", "invoice.payment_failed") and cliente:
+                        with STATE_LOCK:
+                            con.execute("""UPDATE users SET premium=0
+                                           WHERE stripe_customer=? AND id<>1""", (cliente,))
                             con.commit()
                     return self._json({"ok": True})
                 except Exception as exc:   # noqa: BLE001
