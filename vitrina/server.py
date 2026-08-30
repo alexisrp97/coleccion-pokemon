@@ -21,6 +21,25 @@ import smtplib
 from email.mime.text import MIMEText
 
 
+def _manda_push(sub_json, titulo, cuerpo, url="/"):
+    """Manda un aviso push al navegador del usuario. Devuelve si pudo."""
+    clave = os.environ.get("VAPID_PRIVATE_KEY", "")
+    if not (clave and sub_json):
+        return False
+    try:
+        from pywebpush import webpush, WebPushException
+        webpush(
+            subscription_info=json.loads(sub_json),
+            data=json.dumps({"title": titulo, "body": cuerpo, "url": url}, ensure_ascii=False),
+            vapid_private_key=clave,
+            vapid_claims={"sub": "mailto:" + (os.environ.get("VAPID_CONTACT") or "aviso@collector.app")},
+        )
+        return True
+    except Exception as exc:   # noqa: BLE001
+        print(f"[push] fallo: {exc!r}", flush=True)
+        return False
+
+
 def _manda_correo(dest, asunto, cuerpo):
     """Envía un correo con las llaves SMTP del ambiente. Devuelve si pudo."""
     host = os.environ.get("SMTP_HOST")
@@ -134,12 +153,30 @@ def make_handler(con, config):
                     ver = int(db.get_meta(con, kv) or 0)
                     return self._send(200, '{"version": %d, "state": %s}' % (ver, raw))
 
+                if url.path == "/sw.js":
+                    js = """self.addEventListener('push', e => {
+  let d = {}; try { d = e.data.json(); } catch (err) { d = {title: 'collector.app', body: e.data && e.data.text() || ''}; }
+  e.waitUntil(self.registration.showNotification(d.title || 'collector.app', {
+    body: d.body || '', icon: '/icon.png', badge: '/icon.png', data: {url: d.url || '/'}
+  }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(clients.openWindow(e.notification.data && e.notification.data.url || '/'));
+});
+"""
+                    return self._send(200, js, "application/javascript")
+
                 if url.path == "/manifest.webmanifest":
                     return self._send(200, json.dumps({
-                        "name": "collector.app", "short_name": "collector",
-                        "start_url": "/", "display": "standalone",
-                        "background_color": "#0b1b13", "theme_color": "#0b1b13",
-                        "icons": [{"src": "/icon.png", "sizes": "512x512", "type": "image/png"}],
+                        "name": "collector.app — colección TCG", "short_name": "collector",
+                        "description": "Registra, ordena y valora tu colección de cartas.",
+                        "start_url": "/", "scope": "/", "display": "standalone", "orientation": "portrait",
+                        "background_color": "#0b1b13", "theme_color": "#0b1b13", "lang": "es",
+                        "icons": [
+                            {"src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+                            {"src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+                        ],
                     }), "application/manifest+json")
 
                 if url.path == "/icon.png":
@@ -230,6 +267,7 @@ def make_handler(con, config):
                     return self._json({
                         "paylink": db.get_meta(con, "cfg:paylink") or "",
                         "ebay": db.get_meta(con, "cfg:ebay") or "",
+                        "vapid_public": os.environ.get("VAPID_PUBLIC_KEY", ""),
                     })
 
                 if url.path == "/api/state":
@@ -335,7 +373,8 @@ def make_handler(con, config):
                     return self._error("hace falta entrar con tu cuenta", 401)
                 try:
                     with STATE_LOCK:
-                        row = con.execute("SELECT premium, email FROM users WHERE id=?", (uid,)).fetchone()
+                        row = con.execute("SELECT premium, email, push_sub FROM users WHERE id=?",
+                                          (uid,)).fetchone()
                     if not row or not (row[0] or uid == 1):
                         return self._error("el cazador por correo es cosa de Premium", 402)
                     body = self._body()
@@ -347,18 +386,21 @@ def make_handler(con, config):
                     with STATE_LOCK:
                         if db.get_meta(con, marca) == hoy:
                             return self._json({"enviado": False, "motivo": "ya avisado hoy"})
-                        correo = row[1]
+                        correo, push_sub = row[1], row[2]
                     precio = str(body.get("precio") or "?")
                     objetivo = str(body.get("objetivo") or "?")
                     cuerpo = (f"¡{nombre_carta} está a tiro!\n\n"
                               f"Precio ahora: {precio} — tu objetivo: {objetivo}.\n\n"
                               f"Corre a por ella. — collector.app")
-                    ok = _manda_correo(correo, f"🎯 A tiro: {nombre_carta}", cuerpo)
-                    if ok:
+                    ok_correo = _manda_correo(correo, f"🎯 A tiro: {nombre_carta}", cuerpo)
+                    ok_push = _manda_push(push_sub, "🎯 A tiro: " + nombre_carta,
+                                          f"{precio} · tu objetivo era {objetivo}")
+                    if ok_correo or ok_push:
                         with STATE_LOCK:
                             db.set_meta(con, marca, hoy)
                             con.commit()
-                    return self._json({"enviado": bool(ok)})
+                    return self._json({"enviado": bool(ok_correo or ok_push),
+                                       "correo": ok_correo, "push": ok_push})
                 except Exception as exc:   # noqa: BLE001
                     return self._error(exc, 500)
 
@@ -402,6 +444,20 @@ def make_handler(con, config):
                     return self._json({"ok": True})
                 except Exception as exc:   # noqa: BLE001
                     return self._error(exc, 400)
+
+            if path == "/api/push/suscribir":
+                uid = self._uid()
+                if not uid:
+                    return self._error("hace falta entrar con tu cuenta", 401)
+                try:
+                    sub = self._body().get("sub")
+                    with STATE_LOCK:
+                        con.execute("UPDATE users SET push_sub=? WHERE id=?",
+                                    (json.dumps(sub) if sub else None, uid))
+                        con.commit()
+                    return self._json({"hecho": True})
+                except Exception as exc:   # noqa: BLE001
+                    return self._error(exc, 500)
 
             if path == "/api/email/verificar":
                 uid = self._uid()
